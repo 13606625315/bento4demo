@@ -43,9 +43,8 @@ private:
     std::vector<unsigned char> m_pps_data;
     
     // 内部方法
-    AP4_SyntheticSampleTable* CreateSampleTable(const std::string& codec_type, int width, int height, double fps);
-    void AddSamplesToTrack(AP4_Track* track, AP4_ByteStream* input_stream, const std::string& codec_type);
-    
+    AP4_SyntheticSampleTable* CreateSampleTable(const std::string& codec_type, int width, int height);
+
     // NAL单元处理方法
     bool parseNALU(const uint8_t* data, size_t size, std::vector<std::pair<const uint8_t*, size_t>>& nalus);
     bool IsKeyFrame(const std::vector<unsigned char>& nal_unit, const std::string& codec_type);

@@ -107,6 +107,8 @@ AP4_Result H264H265ToFMP4Converter::StartEncode(const std::string& codec_type, i
 
 
 AP4_Result H264H265ToFMP4Converter::AddSample(const unsigned char* data, size_t size, bool is_keyframe, AP4_UI64& dts, AP4_UI64& cts) {
+    (void)dts;
+    (void)cts;
     if (!m_encoding_started) {
         std::cout<<"StartEncode failed"<<std::endl;
         return AP4_ERROR_INVALID_STATE;
@@ -118,35 +120,39 @@ AP4_Result H264H265ToFMP4Converter::AddSample(const unsigned char* data, size_t 
         return AP4_ERROR_INVALID_FORMAT;
     }
     
-    // 检测并保存参数集
-    for (const auto& nal_unit : nalus) {
-        if (nal_unit.second > 0) {
-            unsigned char nal_type;
-            if (m_codec_type == "h264" || m_codec_type == "avc") {
-                nal_type = nal_unit.first[0] & 0x1F;
-                if (nal_type == 7) { // SPS
-                    m_sps_data.assign(nal_unit.first, nal_unit.first + nal_unit.second);
-                } else if (nal_type == 8) { // PPS
-                    m_pps_data.assign(nal_unit.first, nal_unit.first + nal_unit.second);
-                }
-            } else if (m_codec_type == "h265" || m_codec_type == "hevc") {
-                nal_type = (nal_unit.first[0] >> 1) & 0x3F;
-                if (nal_type == 32) { // VPS
-                    m_vps_data.assign(nal_unit.first, nal_unit.first + nal_unit.second);
-                    std::cout << "提取到 VPS，大小: " << nal_unit.second << " 字节" << std::endl;
-                } else if (nal_type == 33) { // SPS
-                    m_sps_data.assign(nal_unit.first, nal_unit.first + nal_unit.second);
-                    std::cout << "提取到 SPS，大小: " << nal_unit.second << " 字节" << std::endl;
-                } else if (nal_type == 34) { // PPS
-                    m_pps_data.assign(nal_unit.first, nal_unit.first + nal_unit.second);
-                    std::cout << "提取到 PPS，大小: " << nal_unit.second << " 字节" << std::endl;
-                }
-            }
-        }
-    }
+
     
     // 如果还没有创建video track，并且我们有了必要的参数集，现在创建它
     if (!m_sample_table) {
+
+        // 检测并保存参数集
+        for (const auto& nal_unit : nalus) {
+            if (nal_unit.second > 0) {
+                unsigned char nal_type;
+                if (m_codec_type == "h264" || m_codec_type == "avc") {
+                    nal_type = nal_unit.first[0] & 0x1F;
+                    if (nal_type == 7) { // SPS
+                        m_sps_data.assign(nal_unit.first, nal_unit.first + nal_unit.second);
+                    } else if (nal_type == 8) { // PPS
+                        m_pps_data.assign(nal_unit.first, nal_unit.first + nal_unit.second);
+                    }
+                } else if (m_codec_type == "h265" || m_codec_type == "hevc") {
+                    nal_type = (nal_unit.first[0] >> 1) & 0x3F;
+                    if (nal_type == 32) { // VPS
+                        m_vps_data.assign(nal_unit.first, nal_unit.first + nal_unit.second);
+                        std::cout << "提取到 VPS，大小: " << nal_unit.second << " 字节" << std::endl;
+                    } else if (nal_type == 33) { // SPS
+                        m_sps_data.assign(nal_unit.first, nal_unit.first + nal_unit.second);
+                        std::cout << "提取到 SPS，大小: " << nal_unit.second << " 字节" << std::endl;
+                    } else if (nal_type == 34) { // PPS
+                        m_pps_data.assign(nal_unit.first, nal_unit.first + nal_unit.second);
+                        std::cout << "提取到 PPS，大小: " << nal_unit.second << " 字节" << std::endl;
+                    }
+                }
+            }
+        }
+
+
         bool has_required_params = false;
         if (m_codec_type == "h264" || m_codec_type == "avc") {
             has_required_params = !m_sps_data.empty() && !m_pps_data.empty();
@@ -156,7 +162,7 @@ AP4_Result H264H265ToFMP4Converter::AddSample(const unsigned char* data, size_t 
         
         if (has_required_params) {
             // 创建视频track
-            m_sample_table = CreateSampleTable(m_codec_type, m_width, m_height, m_fps);
+            m_sample_table = CreateSampleTable(m_codec_type, m_width, m_height);
             if (!m_sample_table) {
                 Reset();
                 return AP4_ERROR_INVALID_FORMAT;
@@ -222,8 +228,9 @@ AP4_Result H264H265ToFMP4Converter::AddSample(const unsigned char* data, size_t 
     if (AP4_SUCCEEDED(result)) {
         m_sample_count++;
     }
-    
+    #ifdef mp4_debug
     std::cout<<"AddSample result:"<<result<<std::endl;
+    #endif
     return result;
 }
 
@@ -321,7 +328,7 @@ void H264H265ToFMP4Converter::Reset() {
     m_pps_data.clear();
 }
 
-AP4_SyntheticSampleTable* H264H265ToFMP4Converter::CreateSampleTable(const std::string& codec_type, int width, int height, double fps)
+AP4_SyntheticSampleTable* H264H265ToFMP4Converter::CreateSampleTable(const std::string& codec_type, int width, int height)
 {
     AP4_SampleDescription* sample_desc = nullptr;
     
@@ -361,7 +368,7 @@ AP4_SyntheticSampleTable* H264H265ToFMP4Converter::CreateSampleTable(const std::
         AP4_AvccAtom* avcc = new AP4_AvccAtom(0x42, 0x00, 0x1e, 0, 0, 0, 4, sps_array, pps_array);
         
         sample_desc = new AP4_AvcSampleDescription(AP4_SAMPLE_FORMAT_AVC1,
-                                                  m_width, m_height,
+                                                  width, height,
                                                   24,
                                                   "AVC Coding",
                                                   avcc);
@@ -451,7 +458,7 @@ AP4_SyntheticSampleTable* H264H265ToFMP4Converter::CreateSampleTable(const std::
         std::cout << "创建 HVCC 原子完成" << std::endl;
         
         sample_desc = new AP4_HevcSampleDescription(AP4_SAMPLE_FORMAT_HVC1,
-                                                   m_width, m_height,
+                                                   width, height,
                                                    24,
                                                    "HEVC Coding",
                                                    hvcc);
@@ -508,6 +515,7 @@ AP4_Result H264H265ToFMP4Converter::WriteInitializationSegment() {
 
         AP4_UI64   mdat_position = position+moov->GetSize();
         unsigned int t=0;
+        (void)t;
         AP4_Result result = AP4_SUCCESS;
         AP4_Array<AP4_Array<AP4_UI64>*> trak_chunk_offsets_backup;
         AP4_Array<AP4_UI64>             chunk_offsets;
@@ -550,6 +558,16 @@ end:
         }
         // 写入moov
         moov->Write(*m_output_stream);
+
+        (void)mdat_is_large;
+        // if (mdat_is_large) {
+        //     stream.WriteUI32(1);
+        //     stream.WriteUI32(AP4_ATOM_TYPE_MDAT);
+        //     stream.WriteUI64(mdat_size);
+        // } else {
+        //     stream.WriteUI32((AP4_UI32)mdat_size);
+        //     stream.WriteUI32(AP4_ATOM_TYPE_MDAT);
+        // }
     }
     
     return AP4_SUCCESS;
@@ -560,18 +578,7 @@ AP4_Result H264H265ToFMP4Converter::WriteMediaSegment() {
         return AP4_ERROR_INVALID_STATE;
     }
     
-    // 创建mfhd atom
-    AP4_MfhdAtom* mfhd = new AP4_MfhdAtom(1); // sequence number
-    
-    // 创建tfhd atom
-    AP4_TfhdAtom* tfhd = new AP4_TfhdAtom(AP4_TFHD_FLAG_DEFAULT_SAMPLE_DURATION_PRESENT |
-                                         AP4_TFHD_FLAG_DEFAULT_SAMPLE_SIZE_PRESENT,
-                                         1, // track_id
-                                         0, // base_data_offset
-                                         0, // sample_description_index
-                                         TIME_SCALE / (AP4_UI32)m_fps, // default_sample_duration (90000/25=3600)
-                                         0, // default_sample_size
-                                         0); // default_sample_flags
+
     
     // 创建trun entries
     AP4_Array<AP4_TrunAtom::Entry> entries;
@@ -654,7 +661,3 @@ void H264H265ToFMP4Converter::CleanupResources() {
     Reset();
 }
 
-
-void H264H265ToFMP4Converter::AddSamplesToTrack(AP4_Track* track, AP4_ByteStream* input_stream, const std::string& codec_type) {
-    // 这个方法保留用于兼容性，实际使用AddSample接口
-}

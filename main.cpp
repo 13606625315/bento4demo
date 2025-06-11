@@ -227,16 +227,19 @@ static int32_t read_video_file(const char* path, char** fileBuf, int32_t* fileLe
 bool ConvertToAnnexB(unsigned char* data, int size, std::vector<unsigned char>& output) {
     output.clear();
     
+    #ifdef mp4_debug
     // 添加调试信息
     std::cout << "ConvertToAnnexB: size=" << size << ", first 8 bytes: ";
     for (int i = 0; i < std::min(8, size); i++) {
         printf("%02X ", data[i]);
     }
     std::cout << std::endl;
-    
+    #endif
     // 检查是否已经是 Annex-B 格式（以 0x00000001 开头）
     if (size >= 4 && data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x00 && data[3] == 0x01) {
+        #ifdef mp4_debug
         std::cout << "Already Annex-B format" << std::endl;
+        #endif
         output.assign(data, data + size);
         return true;
     }
@@ -408,12 +411,14 @@ int ConvertWithStepByStep(const std::string& input_file, const std::string& outp
         int32_t data_length = head->frame_len - DHAV_HEAD_LENGTH - DHAV_TAIL_LENGTH - head->expand_len;
         int32_t data_offset = DHAV_HEAD_LENGTH + head->expand_len;
         
-        VideoMsg msg = {0};
+        VideoMsg msg;
+        memset(&msg, 0, sizeof(msg));
         msg.frametype = (head->type == I_FRAME_FLAG) ? 1 : 0;
         msg.usedSize = data_length;
         msg.pts = static_cast<int64_t>(__get_time_ms());
         msg.frameBuff = (unsigned char*)(pTmpHead + data_offset);
         
+        #ifdef mp4_debug
         // 在处理每一帧时添加调试信息
         std::cout << "Processing frame: type=" << msg.frametype 
                   << ", size=" << msg.usedSize 
@@ -422,17 +427,18 @@ int ConvertWithStepByStep(const std::string& input_file, const std::string& outp
             printf("%02X ", msg.frameBuff[i]);
         }
         std::cout << std::endl;
-        
+
         // 检查数据格式并转换为 Annex-B 格式
         std::vector<unsigned char> annexb_data;
         if (!ConvertToAnnexB(msg.frameBuff, msg.usedSize, annexb_data)) {
             std::cerr << "Failed to convert frame data to Annex-B format" << std::endl;
             continue;
         }
-        
-        // 写入转换后的帧数据
         result = converter.AddSample(annexb_data.data(), annexb_data.size(), msg.frametype, dts, cts);
-        
+        #else     
+        // 写入转换后的帧数据
+        result = converter.AddSample(msg.frameBuff, msg.usedSize, msg.frametype, dts, cts);
+        #endif  
         pTmpHead += head->frame_len;
         dts += frame_duration;
         cts += frame_duration;
