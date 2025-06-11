@@ -49,7 +49,6 @@ private:
     bool parseNALU(const uint8_t* data, size_t size, std::vector<std::pair<const uint8_t*, size_t>>& nalus);
     bool IsKeyFrame(const std::vector<unsigned char>& nal_unit, const std::string& codec_type);
     AP4_Result WriteInitializationSegment();
-    AP4_Result WriteMediaSegment();
     void CleanupResources();
 };
 

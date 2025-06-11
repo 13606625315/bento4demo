@@ -288,15 +288,12 @@ AP4_Result H264H265ToFMP4Converter::EndEncode(const std::string& output_file) {
     m_output_stream = output_stream;
     m_owns_output_stream = true;
     
-    // 写入初始化段
     result = WriteInitializationSegment();
     if (AP4_FAILED(result)) {
         CleanupResources();
         return result;
     }
     
-    // 写入媒体段
-    result = WriteMediaSegment();
     
     CleanupResources();
     return result;
@@ -552,108 +549,44 @@ AP4_Result H264H265ToFMP4Converter::WriteInitializationSegment() {
             }        
             result = trak->SetChunkOffsets(chunk_offsets);
         }
-end:
-        for (unsigned int i=0; i<trak_chunk_offsets_backup.ItemCount(); i++) {
-            delete trak_chunk_offsets_backup[i];
-        }
+
         // 写入moov
         moov->Write(*m_output_stream);
 
-        (void)mdat_is_large;
-        // if (mdat_is_large) {
-        //     stream.WriteUI32(1);
-        //     stream.WriteUI32(AP4_ATOM_TYPE_MDAT);
-        //     stream.WriteUI64(mdat_size);
-        // } else {
-        //     stream.WriteUI32((AP4_UI32)mdat_size);
-        //     stream.WriteUI32(AP4_ATOM_TYPE_MDAT);
-        // }
-    }
-    
-    return AP4_SUCCESS;
-}
-
-AP4_Result H264H265ToFMP4Converter::WriteMediaSegment() {
-    if (!m_video_track || !m_output_stream || m_sample_count == 0) {
-        return AP4_ERROR_INVALID_STATE;
-    }
-    
-
-    
-    // 创建trun entries
-    AP4_Array<AP4_TrunAtom::Entry> entries;
-    for (AP4_Cardinal i = 0; i < m_sample_count; i++) {
-        AP4_Sample sample;
-        m_video_track->GetSample(i, sample);
-        
-        AP4_TrunAtom::Entry entry;
-        entry.sample_duration = sample.GetDuration();
-        entry.sample_size = sample.GetSize();
-        entry.sample_flags = sample.IsSync() ? 0x02000000 : 0x01010000;
-        entry.sample_composition_time_offset = sample.GetCtsDelta();
-        
-        entries.Append(entry);
-    }
-    
-    // 创建movie fragment (moof) 先不添加trun，需要计算data_offset
-    AP4_ContainerAtom* moof = new AP4_ContainerAtom(AP4_ATOM_TYPE_MOOF);
-
-    // 创建media data (mdat)
-    AP4_UI64 mdat_size = 8; // header size
-    for (AP4_Cardinal i = 0; i < m_sample_count; i++) {
-        AP4_Sample sample;
-        m_video_track->GetSample(i, sample);
-        mdat_size += sample.GetSize();
-    }
-    
-    // 写入mdat header
-    AP4_UI32 mdat_size_32 = (AP4_UI32)mdat_size;
-    m_output_stream->WriteUI32(mdat_size_32);
-    m_output_stream->WriteUI32(AP4_ATOM_TYPE_MDAT);
-    
-    // 写入sample data
-    for (AP4_Cardinal i = 0; i < m_sample_count; i++) {
-        AP4_Sample sample;
-        m_video_track->GetSample(i, sample);
-        
-        AP4_DataBuffer sample_data;
-        sample.ReadData(sample_data);
-        
-        // 验证数据格式 - 确保是AVCC格式（长度前缀）
-        const unsigned char* data = sample_data.GetData();
-        AP4_Size data_size = sample_data.GetDataSize();
-        
-        if (data_size >= 4) {
-            // 检查前4字节是否为合理的NAL单元长度
-            AP4_UI32 nal_size = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
-            
-            // 详细的调试信息
-            if (i < 5 || nal_size > data_size - 4) { // 只输出前5个样本或有问题的样本
-                std::cout << "Sample " << i << ": data_size=" << data_size 
-                         << ", first 8 bytes: ";
-                for (int j = 0; j < std::min(8, (int)data_size); j++) {
-                    printf("%02X ", data[j]);
-                }
-                std::cout << ", nal_size=" << nal_size << std::endl;
-            }
-            
-            if (nal_size > 0 && nal_size <= data_size - 4) {
-                // 数据格式正确，直接写入
-                m_output_stream->Write(data, data_size);
-            } else {
-                // 数据格式可能有问题，输出调试信息
-                std::cout << "ERROR: Sample " << i << " has invalid NAL size: " << nal_size 
-                         << ", data_size: " << data_size << std::endl;
-                // 仍然写入数据，但标记为错误
-                m_output_stream->Write(data, data_size);
-            }
+        if (mdat_is_large) {
+            m_output_stream->WriteUI32(1);
+            m_output_stream->WriteUI32(AP4_ATOM_TYPE_MDAT);
+            m_output_stream->WriteUI64(mdat_size);
         } else {
-            std::cout << "ERROR: Sample " << i << " too small: " << data_size << " bytes" << std::endl;
-            m_output_stream->Write(data, data_size);
+            m_output_stream->WriteUI32((AP4_UI32)mdat_size);
+            m_output_stream->WriteUI32(AP4_ATOM_TYPE_MDAT);
+        }
+        
+        // write all tracks and restore the chunk offsets to their backed-up values
+        for (AP4_List<AP4_Track>::Item* track_item = m_movie->GetTracks().FirstItem();
+             track_item;
+             track_item = track_item->GetNext(), ++t) {
+            AP4_Track*    track = track_item->GetData();
+            AP4_TrakAtom* trak  = track->UseTrakAtom();
+            
+            // restore the backed-up chunk offsets
+            result = trak->SetChunkOffsets(*trak_chunk_offsets_backup[t]);
+    
+            // write all the track's samples
+            AP4_Cardinal   sample_count = track->GetSampleCount();
+            AP4_Sample     sample;
+            AP4_DataBuffer sample_data;
+            for (AP4_Ordinal i=0; i<sample_count; i++) {
+                track->ReadSample(i, sample, sample_data);
+                m_output_stream->Write(sample_data.GetData(), sample_data.GetDataSize());
+            }
+        }
+        end:
+        for (unsigned int i=0; i<trak_chunk_offsets_backup.ItemCount(); i++) {
+            delete trak_chunk_offsets_backup[i];
         }
     }
     
-    delete moof;
     return AP4_SUCCESS;
 }
 
