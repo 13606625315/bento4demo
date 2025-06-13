@@ -1,8 +1,8 @@
-#include "H264H265ToFMP4Converter.h"
+#include "MP4Converter.h"
 #include <iostream>
 #include <fstream>
 
-H264H265ToFMP4Converter::H264H265ToFMP4Converter() 
+MP4Converter::MP4Converter() 
     : m_movie(nullptr)
     , m_video_track(nullptr)
     , m_sample_table(nullptr)
@@ -16,12 +16,12 @@ H264H265ToFMP4Converter::H264H265ToFMP4Converter()
     , m_fps(25.0) {
 }
 
-H264H265ToFMP4Converter::~H264H265ToFMP4Converter() {
+MP4Converter::~MP4Converter() {
     CleanupResources();
 }
 
 // NAL单元分割函数
-bool H264H265ToFMP4Converter::parseNALU(const uint8_t* data, size_t size, std::vector<std::pair<const uint8_t*, size_t>>& nalus)
+bool MP4Converter::parseNALU(const uint8_t* data, size_t size, std::vector<std::pair<const uint8_t*, size_t>>& nalus)
 {
     if (!data || size < 4) {
         return false;
@@ -64,7 +64,7 @@ bool H264H265ToFMP4Converter::parseNALU(const uint8_t* data, size_t size, std::v
 }
 
 // 检查是否为关键帧
-bool H264H265ToFMP4Converter::IsKeyFrame(const std::vector<unsigned char>& nal_unit, const std::string& codec_type) {
+bool MP4Converter::IsKeyFrame(const std::vector<unsigned char>& nal_unit, const std::string& codec_type) {
     if (nal_unit.empty()) return false;
     
     if (codec_type == "h264" || codec_type == "avc") {
@@ -81,7 +81,7 @@ bool H264H265ToFMP4Converter::IsKeyFrame(const std::vector<unsigned char>& nal_u
 }
 
 
-AP4_Result H264H265ToFMP4Converter::StartEncode(const std::string& codec_type, int width, int height, double fps) {
+AP4_Result MP4Converter::StartEncode(const std::string& codec_type, int width, int height, double fps) {
     if (m_encoding_started) {
         return AP4_ERROR_INVALID_STATE;
     }
@@ -106,7 +106,7 @@ AP4_Result H264H265ToFMP4Converter::StartEncode(const std::string& codec_type, i
 }
 
 
-AP4_Result H264H265ToFMP4Converter::AddSample(const unsigned char* data, size_t size, bool is_keyframe, AP4_UI64& dts, AP4_UI64& cts) {
+AP4_Result MP4Converter::AddSample(const unsigned char* data, size_t size, bool is_keyframe, AP4_UI64& dts, AP4_UI64& cts) {
     (void)dts;
     (void)cts;
     if (!m_encoding_started) {
@@ -234,7 +234,7 @@ AP4_Result H264H265ToFMP4Converter::AddSample(const unsigned char* data, size_t 
     return result;
 }
 
-AP4_Result H264H265ToFMP4Converter::EndEncode(const std::string& output_file) {
+AP4_Result MP4Converter::EndEncode(const std::string& output_file) {
     if (!m_encoding_started) {
         return AP4_ERROR_INVALID_STATE;
     }
@@ -299,7 +299,7 @@ AP4_Result H264H265ToFMP4Converter::EndEncode(const std::string& output_file) {
     return result;
 }
 
-void H264H265ToFMP4Converter::Reset() {
+void MP4Converter::Reset() {
     if (m_movie) {
         delete m_movie;
         m_movie = nullptr;
@@ -325,7 +325,7 @@ void H264H265ToFMP4Converter::Reset() {
     m_pps_data.clear();
 }
 
-AP4_SyntheticSampleTable* H264H265ToFMP4Converter::CreateSampleTable(const std::string& codec_type, int width, int height)
+AP4_SyntheticSampleTable* MP4Converter::CreateSampleTable(const std::string& codec_type, int width, int height)
 {
     AP4_SampleDescription* sample_desc = nullptr;
     
@@ -469,7 +469,7 @@ AP4_SyntheticSampleTable* H264H265ToFMP4Converter::CreateSampleTable(const std::
     return m_sample_table;
 }
 
-AP4_Result H264H265ToFMP4Converter::WriteInitializationSegment() {
+AP4_Result MP4Converter::WriteInitializationSegment() {
     if (!m_movie || !m_output_stream) {
         return AP4_ERROR_INVALID_STATE;
     }
@@ -590,7 +590,7 @@ AP4_Result H264H265ToFMP4Converter::WriteInitializationSegment() {
     return AP4_SUCCESS;
 }
 
-void H264H265ToFMP4Converter::CleanupResources() {
+void MP4Converter::CleanupResources() {
     Reset();
 }
 

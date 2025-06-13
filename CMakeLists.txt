@@ -65,7 +65,7 @@ function(create_converter_executable target_name source_file)
 endfunction()
 
 # 创建可执行文件
-create_converter_executable(h264_h265_to_fmp4_new "main.cpp;H264H265ToFMP4Converter.cpp")
+create_converter_executable(h264_h265_to_fmp4_new "main.cpp;MP4Converter.cpp;FMP4Converter.cpp")
 
 
 # 安装规则（可选）

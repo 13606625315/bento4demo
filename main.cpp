@@ -1,4 +1,5 @@
-#include "H264H265ToFMP4Converter.h"
+#include "MP4Converter.h"
+#include "FMP4Converter.h"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -334,14 +335,16 @@ static unsigned long __get_time_ms()
 void PrintUsage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [options] <input_file> <output_file> <codec_type>" << std::endl;
     std::cout << "Options:" << std::endl;
-    std::cout << "  --step-by-step    Use step-by-step encoding interface" << std::endl;
+    std::cout << "  --fmp4            Generate fragmented MP4 (fMP4) format" << std::endl;
     std::cout << "  --width <width>   Video width (default: 1920)" << std::endl;
     std::cout << "  --height <height> Video height (default: 1080)" << std::endl;
     std::cout << "codec_type: h264 or h265" << std::endl;
     std::cout << std::endl;
     std::cout << "Examples:" << std::endl;
     std::cout << "  " << program_name << " input.264 output.mp4 h264" << std::endl;
-    std::cout << "  " << program_name << " --step-by-step --width 1280 --height 720 input.265 output.mp4 h265" << std::endl;
+    std::cout << "  " << program_name << "  --width 1280 --height 720 input.265 output.mp4 h265" << std::endl;
+    std::cout << "  " << program_name << " --fmp4 input.264 output.mp4 h264" << std::endl;
+    std::cout << "  " << program_name << " --fmp4 input.265 output.mp4 h265" << std::endl;
 }
 
 std::vector<unsigned char> ReadFileData(const std::string& filename) {
@@ -363,12 +366,122 @@ std::vector<unsigned char> ReadFileData(const std::string& filename) {
 
 
 
-int ConvertWithStepByStep(const std::string& input_file, const std::string& output_file, 
+// FMP4转换测试函数
+int ConvertWithStepByStepFMP4(const std::string& input_file, const std::string& output_file,
+                             const std::string& codec_type, int width, int height) {
+    (void)input_file; // 标记为未使用以避免警告
+    std::cout << "Using step-by-step fMP4 encoding interface..." << std::endl;
+    
+    FMP4Converter converter;
+    
+    // 步骤1: 开始编码（在这里确定帧率）
+    std::cout << "Step 1: Starting fMP4 encode..." << std::endl;
+    const double fps = 24.0; // 在start时确定帧率
+    AP4_Result result = converter.StartEncode(codec_type, width, height, fps);
+    if (AP4_FAILED(result)) {
+        std::cerr << "Failed to start fMP4 encoding: " << result << std::endl;
+        return 1;
+    }
+    
+    char* fileBuf = NULL;
+    int32_t fileLen = 0;
+    char path[] = "./v_demo.dav";
+    int32_t ret = read_video_file(path, &fileBuf, &fileLen);
+    if (ret) {
+        ILOGE("[%s] read_video_file err", __func__);
+        usleep(1000 * 1000);
+        return false;
+    }
+
+    AP4_UI64 dts = 0;
+    AP4_UI64 cts = 0;
+    const AP4_UI64 frame_duration = static_cast<AP4_UI64>(TIME_SCALE / fps); // 根据fps计算帧间隔(90000时间刻度)
+
+    char* pTmpHead = fileBuf;
+    // 在 ConvertWithStepByStepFMP4 函数中，替换现有的 AddSample 调用
+    while (1) {
+        if (!(pTmpHead[0] == 'D' && pTmpHead[1] == 'H' && pTmpHead[2] == 'A' && pTmpHead[3] == 'V')) {
+            ILOGE("[%s] invalid frame", __func__);
+            break;
+        }
+        
+        DAHUA_FRAME_HEAD* head = (DAHUA_FRAME_HEAD*)pTmpHead;
+        
+        if (dahua_head_check_sum((char*)head, head->verify) == false) {
+            ILOGE("[%s] dahua_head_check_sum", __func__);
+            break;
+        }
+        
+        int32_t data_length = head->frame_len - DHAV_HEAD_LENGTH - DHAV_TAIL_LENGTH - head->expand_len;
+        int32_t data_offset = DHAV_HEAD_LENGTH + head->expand_len;
+        
+        VideoMsg msg;
+        memset(&msg, 0, sizeof(msg));
+        msg.frametype = (head->type == I_FRAME_FLAG) ? 1 : 0;
+        msg.usedSize = data_length;
+        msg.pts = static_cast<int64_t>(__get_time_ms());
+        msg.frameBuff = (unsigned char*)(pTmpHead + data_offset);
+        
+        #ifdef mp4_debug
+        // 在处理每一帧时添加调试信息
+        std::cout << "Processing fMP4 frame: type=" << msg.frametype 
+                  << ", size=" << msg.usedSize 
+                  << ", first 8 bytes: ";
+        for (int i = 0; i < std::min(8, msg.usedSize); i++) {
+            printf("%02X ", msg.frameBuff[i]);
+        }
+        std::cout << std::endl;
+
+        // 检查数据格式并转换为 Annex-B 格式
+        std::vector<unsigned char> annexb_data;
+        if (!ConvertToAnnexB(msg.frameBuff, msg.usedSize, annexb_data)) {
+            std::cerr << "Failed to convert frame data to Annex-B format" << std::endl;
+            continue;
+        }
+        result = converter.AddSample(annexb_data.data(), annexb_data.size(), msg.frametype, dts, cts);
+        #else     
+        // 写入转换后的帧数据
+        result = converter.AddSample(msg.frameBuff, msg.usedSize, msg.frametype, dts, cts);
+        #endif  
+        pTmpHead += head->frame_len;
+        dts += frame_duration;
+        cts += frame_duration;
+        if (AP4_FAILED(result)) {
+            std::cerr << "Failed to add fMP4 sample chunk at offset " << data_offset << ": " << result << std::endl;
+            continue;
+        }
+        
+        if (pTmpHead >= fileBuf + fileLen) {
+            break;
+        }
+    }
+    
+    if (fileBuf) {
+        free(fileBuf);
+        fileBuf = NULL;
+    }
+    
+    // 步骤3: 处理数据（支持分段处理，模拟网络数据）
+    std::cout << "Processed all fMP4 data chunks successfully." << std::endl;
+    
+    // 步骤4: 结束编码并输出文件
+    std::cout << "Step 4: Ending fMP4 encode and writing output..." << std::endl;
+    result = converter.EndEncode(output_file);
+    if (AP4_FAILED(result)) {
+        std::cerr << "Failed to end fMP4 encoding: " << result << std::endl;
+        return 1;
+    }
+    
+    std::cout << "Step-by-step fMP4 conversion completed successfully!" << std::endl;
+    return 0;
+}
+
+int ConvertWithStepByStep(const std::string& input_file, const std::string& output_file,
                          const std::string& codec_type, int width, int height) {
     (void)input_file; // 标记为未使用以避免警告
     std::cout << "Using step-by-step encoding interface..." << std::endl;
     
-    H264H265ToFMP4Converter converter;
+    MP4Converter converter;
     
     // 步骤1: 开始编码（在这里确定帧率）
     std::cout << "Step 1: Starting encode..." << std::endl;
@@ -483,6 +596,7 @@ int main(int argc, char* argv[]) {
     
     // 解析命令行参数
     bool step_by_step = false;
+    bool use_fmp4 = false;
     int width = 1920;
     int height = 1080;
     std::string input_file;
@@ -495,6 +609,9 @@ int main(int argc, char* argv[]) {
         
         if (arg == "--step-by-step") {
             step_by_step = true;
+            arg_index++;
+        } else if (arg == "--fmp4") {
+            use_fmp4 = true;
             arg_index++;
         } else if (arg == "--width" && arg_index + 1 < argc) {
             width = std::atoi(argv[arg_index + 1]);
@@ -542,10 +659,14 @@ int main(int argc, char* argv[]) {
     std::cout << "Codec type: " << codec_type << std::endl;
     std::cout << "Video dimensions: " << width << "x" << height << std::endl;
     std::cout << "Mode: " << (step_by_step ? "Step-by-step" : "One-step") << std::endl;
+    std::cout << "Format: " << (use_fmp4 ? "fMP4" : "MP4") << std::endl;
     std::cout << std::endl;
     
     // 执行转换
-
-    return ConvertWithStepByStep(input_file, output_file, codec_type, width, height);
+    if (use_fmp4) {
+        return ConvertWithStepByStepFMP4(input_file, output_file, codec_type, width, height);
+    } else {
+        return ConvertWithStepByStep(input_file, output_file, codec_type, width, height);
+    }
 
 }
